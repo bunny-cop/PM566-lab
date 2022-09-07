@@ -1,7 +1,9 @@
 ---
 title: "Lab 03"
-output: html_document
+author: "Xiaofan Zhu"
 date: "`r Sys.Date()`"
+output: github_document 
+always_allow_html: true
 ---
 
 ```{r setup, include=FALSE}
@@ -35,4 +37,102 @@ Note that the `echo = FALSE` parameter was added to the code chunk to prevent pr
 download.file("https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz", "met_all.gz", method="libcurl", timeout = 60)
 met <- data.table::fread("met_all.gz")
 
+##Check the dimensions, headers, footers. How many columns, rows are there?
 ```
+
+
+```{r}
+dim(met)
+```
+```{r}
+head(met)
+```
+```{r}
+tail(met)
+```
+##Take a look at the variables.
+```{r}
+str(met)
+```
+##Take a closer look at the key variables.
+```{r}
+table(met$year)
+```
+```{r}
+table(met$day)
+```
+```{r}
+table(met$hour)
+```
+```{r}
+summary(met$temp)
+```
+```{r}
+summary(met$elev)
+```
+```{r}
+summary(met$wind.sp)
+```
+
+```{r}
+met[met$elev==9999.0] <- NA
+summary(met$elev)
+```
+```{r}
+met <- met[temp>-40]
+met2 <- met[order(temp)]
+head(met2)
+```
+## Check the data against an external data source.
+```{r}
+met <- met[temp>-15]
+met2 <- met[order(temp)]
+head(met2)
+```
+##Calculate summary statistics
+```{r}
+elev <- met[elev==max(elev)]
+summary(elev)
+```
+```{r}
+cor(elev$temp, elev$wind.sp, use="complete")
+cor(elev$temp, elev$hour, use="complete")
+cor(elev$wind.sp, elev$day, use="complete")
+cor(elev$wind.sp, elev$hour, use="complete")
+cor(elev$temp, elev$day, use="complete")
+```
+##Exploratory graphs
+```{r}
+hist(met$elev, breaks=100)
+hist(met$temp)
+hist(met$wind.sp)
+```
+##Look at where the weather station with highest elevation is located.
+```{r}
+library(leaflet)
+elve <- met[elev==max(elev)]
+
+```
+
+```{r}
+leaflet(elev) %>%
+  addProviderTiles('OpenStreetMap') %>% 
+  addCircles(lat=~lat,lng=~lon, opacity=1, fillOpacity=1, radius=100)
+
+```
+```{r}
+library(lubridate)
+elev$date <- with(elev, ymd_h(paste(year, month, day, hour, sep= ' ')))
+summary(elev$date)
+```
+```{r}
+elev <- elev[order(date)]
+head(elev)
+```
+```{r}
+plot(elev$date, elev$temp, type='l')
+```
+```{r}
+plot(elev$date, elev$wind.sp, type='l')
+```
+
