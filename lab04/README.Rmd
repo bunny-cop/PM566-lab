@@ -135,6 +135,7 @@ met_avg[!is.na(region) & !is.na(wind.sp)] %>%
   ggplot(mapping = aes(x = region, y = dew.point)) + 
     stat_summary(fun.data = mean_sdl, geom = "pointrange") +
     stat_summary(fun.data = mean_sdl, geom = "errorbar") 
+   
 ```
 
 ## To show means and error bars on the same plot, use two + stat_summary() commands!
