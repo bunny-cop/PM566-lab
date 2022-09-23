@@ -1,0 +1,192 @@
+---
+title: "Lab 04"
+author: "Xiaofan Zhu"
+date: "`r Sys.Date()`"
+output: github_document 
+always_allow_html: true
+---
+
+```{r install-libraries}
+library(lubridate)
+library(tidyverse)
+library(data.table)
+```
+
+```{r}
+if(!file.exists("../lab03/met_all.gz")){
+ download.file("https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz", "met_all.gz", method="libcurl", timeout = 60)
+}
+
+met <- data.table::fread("../lab03/met_all.gz")
+
+```
+
+## Step 2. Prep Data
+
+# Remove temperatures less than -17C and change elev 9999 to missing value code.
+```{r remove-low-temp}
+met <- met[temp > -17][elev == 9999.0, elev := NA]
+```
+
+# check no 9999s in other important variables
+
+
+# Generate a date variable using the functions as.Date() 
+```{r create-ymd, cache = TRUE}
+met <- met[ ,  ymd := as.Date(paste(year, month, day, sep = "-"))]
+```
+
+## Using the data.table::week function, keep the observations of the first week of the month.
+
+```{r}
+met[, table(week(ymd))]
+met <- met[ week(ymd) == 31 ]
+```
+
+# Compute the mean by station of the variables temp, rh, wind.sp, vis.dist, dew.point, lat, lon, and elev.
+```{r check-max}
+met[, .(
+  temp      = max(temp,na.rm=T),
+  rh        = max(rh,na.rm=T), 
+  wind.sp   = max(wind.sp,na.rm=T), 
+  vis.dist  = max(vis.dist,na.rm=T), 
+  dew.point = max(dew.point,na.rm=T), 
+  lat       = max(lat,na.rm=T), 
+  lon       = max(lon,na.rm=T), 
+  elev      = max(elev,na.rm=T)
+)]
+
+```
+# Great! No more 9999s in our dataset.
+
+```{r check-avg}
+met_avg <- met[, .(
+  temp      = mean(temp,na.rm=T),
+  rh        = mean(rh,na.rm=T), 
+  wind.sp   = mean(wind.sp,na.rm=T), 
+  vis.dist  = mean(vis.dist,na.rm=T), 
+  dew.point = mean(dew.point,na.rm=T), 
+  lat       = mean(lat,na.rm=T), 
+  lon       = mean(lon,na.rm=T), 
+  elev      = mean(elev,na.rm=T)
+), by = "USAFID"]
+```
+
+## Create a region variable for NW, SW, NE, SE based on lon = -98.00 and lat = 39.71 degrees
+```{r}
+met_avg[, region := fifelse(lon >= -98 & lat > 39.71, "NE",
+                fifelse(lon < -98 & lat > 39.71, "NW",
+                fifelse(lon < -98 & lat <= 39.71, "SW","SE")))
+    ]
+table(met_avg$region)
+```
+
+## Create a categorical variable for elevation as in the lecture slides
+```{r}
+met_avg[, elev_cat := fifelse(elev > 252, "high", "low")]
+```
+
+## 3. Make Violin plots of dew point temp by region
+
+```{r violin-dewpoint}
+met_avg[!is.na(region)] %>% 
+  ggplot() + 
+  geom_violin(mapping = aes(x = 1, y = dew.point,  color=region, fill = region)) + 
+  facet_wrap(~ region, nrow = 1)
+```
+
+# The highest dew point temperatures are reported in the southeast.
+
+
+```{r violin-wind.sp}
+met_avg[!is.na(region) & !is.na(wind.sp)] %>% 
+  ggplot() + 
+  geom_violin(mapping = aes(x = 1, y = wind.sp,  color=region, fill = region)) + 
+  facet_wrap(~ region, nrow = 2)
+```
+
+## Say something about the result.
+
+## 4. Use geom_point with geom_smooth to examine the association between dew point temperature and wind speed by region
+# Colour points by region
+# Make sure to deal with NA category
+# Fit a linear regression line by region
+# Describe what you observe in the graph
+
+```{r scatterplot-dewpoint-wind.sp}
+met_avg[!is.na(region) & !is.na(wind.sp)] %>% 
+  ggplot(mapping = aes(x = wind.sp, y = dew.point)) + 
+  geom_point(mapping = aes(color = region)) + 
+  geom_smooth(method = lm, mapping = aes(linetype = region)) 
+  
+```
+
+
+## Comment on these results.
+
+## 5. Use geom_bar to create barplots of the weather stations by elevation category coloured by region
+
+
+
+## 6. Use stat_summary to examine mean dew point and wind speed by region with standard deviation error bars
+
+```{r}
+ met_avg[!is.na(dew.point)] %>%
+  ggplot(mapping = aes(x = region, y = dew.point)) + 
+    stat_summary(fun.data = mean_sdl, geom = "pointrange") +
+    stat_summary(fun.data = mean_sdl, geom = "errorbar") 
+   
+```
+
+## To show means and error bars on the same plot, use two + stat_summary() commands!
+
+##7.  Generate a map of weather stations and show trend in relative humidity of top 10 
+
+```{r}
+library(leaflet)
+# Generating a color palette
+rh.pal <- colorNumeric(c('darkgreen','goldenrod','brown'), domain=met_avg$rh)
+rh.pal
+```
+
+# Use addMarkers to include the top 10 places in relative h (hint: this will be useful rank(-rh) <= 10)
+
+```{r}
+top10rh <- met_avg[ rank(-rh) <= 10]
+```
+
+```{r}
+#met_avg[ order(-rh)][1:10]
+```
+
+# Here I can use top10rh data subset to show just the weather stations that registered the top 10 relative humidity values in the 1st week of August. For now I'll show all:
+
+```{r}
+rhmap <- leaflet(met_avg) %>% 
+  # The looks of the Map
+  addProviderTiles('CartoDB.Positron') %>% 
+  # Some circles
+  addCircles(
+    lat = ~lat, lng=~lon,
+                                                  # HERE IS OUR PAL!
+    label = ~paste0(rh), color = ~ rh.pal(rh),
+    opacity = 1, fillOpacity = 1, radius = 500
+    ) %>%
+  # And a pretty legend
+  addLegend('bottomleft', pal=rh.pal, values=met_avg$rh,
+          title='Relative Humid.', opacity=1)
+rhmap
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
