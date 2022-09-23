@@ -1,5 +1,5 @@
 ---
-title: "Lab 04"
+title: "Lab 05"
 author: "Xiaofan Zhu"
 date: "`r Sys.Date()`"
 output: github_document 
@@ -10,8 +10,9 @@ always_allow_html: true
 library(lubridate)
 library(tidyverse)
 library(data.table)
+library(dtplyr)
 ```
-
+## Step 1. Read in the data
 ```{r}
 if(!file.exists("../lab03/met_all.gz")){
  download.file("https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz", "met_all.gz", method="libcurl", timeout = 60)
@@ -21,165 +22,189 @@ met <- data.table::fread("../lab03/met_all.gz")
 
 ```
 
-## Step 2. Prep Data
+Read in the stations data
+```{r stations, cache= TRUE}
+# Download the data
+stations <- fread("ftp://ftp.ncdc.noaa.gov/pub/data/noaa/isd-history.csv")
+stations[, USAF := as.integer(USAF)]
 
-# Remove temperatures less than -17C and change elev 9999 to missing value code.
-```{r remove-low-temp}
-met <- met[temp > -17][elev == 9999.0, elev := NA]
+# Dealing with NAs and 999999
+stations[, USAF   := fifelse(USAF == 999999, NA_integer_, USAF)]
+stations[, CTRY   := fifelse(CTRY == "", NA_character_, CTRY)]
+stations[, STATE  := fifelse(STATE == "", NA_character_, STATE)]
+
+# Selecting the three relevant columns, and keeping unique records
+stations <- unique(stations[, list(USAF, CTRY, STATE)])
+
+# Dropping NAs
+stations <- stations[!is.na(USAF)]
+
+# Removing duplicates
+stations[, n := 1:.N, by = .(USAF)]
+stations <- stations[n == 1,][, n := NULL]
 ```
-
-# check no 9999s in other important variables
-
-
-# Generate a date variable using the functions as.Date() 
-```{r create-ymd, cache = TRUE}
-met <- met[ ,  ymd := as.Date(paste(year, month, day, sep = "-"))]
-```
-
-## Using the data.table::week function, keep the observations of the first week of the month.
-
+Merge met data as we did during the lecture
 ```{r}
-met[, table(week(ymd))]
-met <- met[ week(ymd) == 31 ]
+met <-  
+  merge(
+  # Data
+  x     = met,      
+  y     = stations, 
+  # List of variables to match
+  by.x  = "USAFID",
+  by.y  = "USAF", 
+  # Which obs to keep?
+  all.x = TRUE,      
+  all.y = FALSE
+  ) 
+
+nrow(met)
 ```
 
-# Compute the mean by station of the variables temp, rh, wind.sp, vis.dist, dew.point, lat, lon, and elev.
-```{r check-max}
-met[, .(
-  temp      = max(temp,na.rm=T),
-  rh        = max(rh,na.rm=T), 
-  wind.sp   = max(wind.sp,na.rm=T), 
-  vis.dist  = max(vis.dist,na.rm=T), 
-  dew.point = max(dew.point,na.rm=T), 
-  lat       = max(lat,na.rm=T), 
-  lon       = max(lon,na.rm=T), 
-  elev      = max(elev,na.rm=T)
+## Q1
+```{r}
+station_averages <- 
+     met[ , .(
+       temp      = mean(temp, na.rm=T),
+       wind.sp   = mean(wind.sp, na.rm=T),
+       atm.press = mean(atm.press,na.rm=T)
+     ), by = USAFID]
+```
+```{r}
+stmeds <- station_averages[ , .(
+          temp50     = median(temp, na.rm=T),
+          windsp50   = median(wind.sp,na.rm=T),
+          atmpress50 = median(atm.press,na.rm=T)
 )]
+stmeds
 
 ```
-# Great! No more 9999s in our dataset.
-
-```{r check-avg}
-met_avg <- met[, .(
-  temp      = mean(temp,na.rm=T),
-  rh        = mean(rh,na.rm=T), 
-  wind.sp   = mean(wind.sp,na.rm=T), 
-  vis.dist  = mean(vis.dist,na.rm=T), 
-  dew.point = mean(dew.point,na.rm=T), 
-  lat       = mean(lat,na.rm=T), 
-  lon       = mean(lon,na.rm=T), 
-  elev      = mean(elev,na.rm=T)
-), by = "USAFID"]
-```
-
-## Create a region variable for NW, SW, NE, SE based on lon = -98.00 and lat = 39.71 degrees
 ```{r}
-met_avg[, region := fifelse(lon >= -98 & lat > 39.71, "NE",
-                fifelse(lon < -98 & lat > 39.71, "NW",
-                fifelse(lon < -98 & lat <= 39.71, "SW","SE")))
-    ]
-table(met_avg$region)
+station_averages[ , 
+              temp_dist50 := abs(temp - stmeds$temp50)][order(temp_dist50)]
 ```
-
-## Create a categorical variable for elevation as in the lecture slides
 ```{r}
-met_avg[, elev_cat := fifelse(elev > 252, "high", "low")]
+station_averages[ which.min(temp_dist50)]
 ```
-
-## 3. Make Violin plots of dew point temp by region
-
-```{r violin-dewpoint}
-met_avg[!is.na(region)] %>% 
-  ggplot() + 
-  geom_violin(mapping = aes(x = 1, y = dew.point,  color=region, fill = region)) + 
-  facet_wrap(~ region, nrow = 1)
-```
-
-# The highest dew point temperatures are reported in the southeast.
-
-
-```{r violin-wind.sp}
-met_avg[!is.na(region) & !is.na(wind.sp)] %>% 
-  ggplot() + 
-  geom_violin(mapping = aes(x = 1, y = wind.sp,  color=region, fill = region)) + 
-  facet_wrap(~ region, nrow = 2)
-```
-
-## Say something about the result.
-
-## 4. Use geom_point with geom_smooth to examine the association between dew point temperature and wind speed by region
-# Colour points by region
-# Make sure to deal with NA category
-# Fit a linear regression line by region
-# Describe what you observe in the graph
-
-```{r scatterplot-dewpoint-wind.sp}
-met_avg[!is.na(region) & !is.na(wind.sp)] %>% 
-  ggplot(mapping = aes(x = wind.sp, y = dew.point)) + 
-  geom_point(mapping = aes(color = region)) + 
-  geom_smooth(method = lm, mapping = aes(linetype = region)) 
-  
-```
-
-
-## Comment on these results.
-
-## 5. Use geom_bar to create barplots of the weather stations by elevation category coloured by region
-
-
-
-## 6. Use stat_summary to examine mean dew point and wind speed by region with standard deviation error bars
-
+## Q2
 ```{r}
- met_avg[!is.na(dew.point)] %>%
-  ggplot(mapping = aes(x = region, y = dew.point)) + 
-    stat_summary(fun.data = mean_sdl, geom = "pointrange") +
-    stat_summary(fun.data = mean_sdl, geom = "errorbar") 
-   
+station_averages <- 
+     met[ , .(
+       temp      = mean(temp, na.rm=T),
+       wind.sp   = mean(wind.sp, na.rm=T),
+       atm.press = mean(atm.press,na.rm=T)
+     ), by = .(USAFID,STATE)]
+head(station_averages)
 ```
-
-## To show means and error bars on the same plot, use two + stat_summary() commands!
-
-##7.  Generate a map of weather stations and show trend in relative humidity of top 10 
-
 ```{r}
-library(leaflet)
-# Generating a color palette
-rh.pal <- colorNumeric(c('darkgreen','goldenrod','brown'), domain=met_avg$rh)
-rh.pal
+statemeds<- station_averages[ , .(
+           temp50    = median(temp, na.rm=T), 
+           wind.sp50 = median(wind.sp, na.rm=T)
+            ), by = STATE]
+statemeds
 ```
-
-# Use addMarkers to include the top 10 places in relative h (hint: this will be useful rank(-rh) <= 10)
-
 ```{r}
-top10rh <- met_avg[ rank(-rh) <= 10]
+station_averages <- 
+  merge(
+  x = station_averages,
+  y = statemeds,
+  by.x = "STATE",
+  by.y = "STATE",
+  all.x = TRUE,
+  all.y = FALSE
+)
 ```
-
 ```{r}
-#met_avg[ order(-rh)][1:10]
+station_averages[ , temp_dist_state50   := temp - temp50]
+station_averages[ , windsp_dist_state50 := wind.sp - wind.sp50] 
+station_averages
 ```
-
-# Here I can use top10rh data subset to show just the weather stations that registered the top 10 relative humidity values in the 1st week of August. For now I'll show all:
-
 ```{r}
-rhmap <- leaflet(met_avg) %>% 
-  # The looks of the Map
-  addProviderTiles('CartoDB.Positron') %>% 
-  # Some circles
-  addCircles(
-    lat = ~lat, lng=~lon,
-                                                  # HERE IS OUR PAL!
-    label = ~paste0(rh), color = ~ rh.pal(rh),
-    opacity = 1, fillOpacity = 1, radius = 500
-    ) %>%
-  # And a pretty legend
-  addLegend('bottomleft', pal=rh.pal, values=met_avg$rh,
-          title='Relative Humid.', opacity=1)
-rhmap
+station_averages[ , eucdist := temp_dist_state50^2 +
+                                windsp_dist_state50^2]
 ```
+```{r}
+repstation <- station_averages[ , .(
+                    eucdist = min(eucdist, na.rm=T))
+                  , by=STATE]
+```
+```{r}
+repweather <- 
+  merge(
+  x = station_averages,
+  y = repstation,
+  by.x = c("eucdist","STATE"),
+  by.y = c("eucdist","STATE"),
+  all.x = FALSE,
+  all.y = TRUE
+)
+repweather
+```
+## Q3
+```{r}
+met_stations <- unique(met[, .(USAFID, STATE, lon, lat)])
+nrow(met_stations)
+```
+```{r}
+length(unique(met$USAFID))
+```
+```{r}
+met_stations <- unique(met[order(USAFID,day,hour)][, .(USAFID, STATE, lon, lat)])
+met_stations[, n := 1:.N, by=USAFID]
+met_stations <- met_stations[n == 1][, n:= NULL]
+nrow(met_stations)
+```
+```{r}
+met_stations[, lat_mid := quantile(lat, probs = .5, na.rm = TRUE), by=STATE]
+met_stations[, lon_mid := quantile(lon, probs = .5, na.rm = TRUE), by=STATE]
 
+met_stations[, dist := sqrt((lat-lat_mid)^2+(lon-lon_mid)^2)]
+met_stations[, mindist := which.min(dist), by=STATE]
+```
+```{r}
+met_stations[, n := 1:.N, by=STATE]
+met_stations[order(STATE,dist)]
+```
+```{r}
+met_location <- met_stations[n == mindist, .(USAFID, STATE, lon, lat)][order(STATE)]
+met_location
+```
+```{r}
+repweather <-
+  merge(
+  x =   repweather[, .(USAFID, STATE)],
+  y = met_stations[, .(USAFID, STATE, lat, lon)],
+  by.x = c("USAFID","STATE"),
+  by.y = c("USAFID","STATE"),
+  all.x = TRUE,
+  all.y = FALSE
+) 
 
-
+repweather[, station_type := "met"]
+met_location <- met_location[, .(USAFID, STATE, lat, lon)][, station_type := "loc"]
+all_stations <- rbind(repweather, met_location, use.names=TRUE)
+```
+```{r}
+ggplot(map_data("state"), aes(x = long, y = lat)) +
+  geom_map(aes(map_id = region), map = map_data("state"), col = "lightgrey", fill = "gray") +
+  geom_point(
+    data    = all_stations,
+    mapping = aes(x = lon, y = lat, col = station_type),
+    inherit.aes = FALSE, cex = 2, alpha = 0.5
+    )
+```
+## Q4
+```{r}
+met[, state_temp := mean(temp, na.rm = TRUE), by = STATE]
+met[, temp_cat := fifelse(
+  state_temp < 20, "low-temp", 
+  fifelse(state_temp < 25, "mid-temp", "high-temp"))
+  ]
+head(met)
+```
+```{r}
+table(met$temp_cat, useNA = "always")
+```
 
 
 
