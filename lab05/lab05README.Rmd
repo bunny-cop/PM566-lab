@@ -1,0 +1,217 @@
+---
+title: "Lab 05"
+author: "Xiaofan Zhu"
+date: "`r Sys.Date()`"
+output: github_document 
+always_allow_html: true
+---
+
+```{r install-libraries}
+library(lubridate)
+library(tidyverse)
+library(data.table)
+library(dtplyr)
+```
+## Step 1. Read in the data
+```{r}
+if(!file.exists("../lab03/met_all.gz")){
+ download.file("https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz", "met_all.gz", method="libcurl", timeout = 60)
+}
+
+met <- data.table::fread("../lab03/met_all.gz")
+
+```
+
+Read in the stations data
+```{r stations, cache= TRUE}
+# Download the data
+stations <- fread("ftp://ftp.ncdc.noaa.gov/pub/data/noaa/isd-history.csv")
+stations[, USAF := as.integer(USAF)]
+
+# Dealing with NAs and 999999
+stations[, USAF   := fifelse(USAF == 999999, NA_integer_, USAF)]
+stations[, CTRY   := fifelse(CTRY == "", NA_character_, CTRY)]
+stations[, STATE  := fifelse(STATE == "", NA_character_, STATE)]
+
+# Selecting the three relevant columns, and keeping unique records
+stations <- unique(stations[, list(USAF, CTRY, STATE)])
+
+# Dropping NAs
+stations <- stations[!is.na(USAF)]
+
+# Removing duplicates
+stations[, n := 1:.N, by = .(USAF)]
+stations <- stations[n == 1,][, n := NULL]
+```
+Merge met data as we did during the lecture
+```{r}
+met <-  
+  merge(
+  # Data
+  x     = met,      
+  y     = stations, 
+  # List of variables to match
+  by.x  = "USAFID",
+  by.y  = "USAF", 
+  # Which obs to keep?
+  all.x = TRUE,      
+  all.y = FALSE
+  ) 
+
+nrow(met)
+```
+
+## Q1
+```{r}
+station_averages <- 
+     met[ , .(
+       temp      = mean(temp, na.rm=T),
+       wind.sp   = mean(wind.sp, na.rm=T),
+       atm.press = mean(atm.press,na.rm=T)
+     ), by = USAFID]
+```
+```{r}
+stmeds <- station_averages[ , .(
+          temp50     = median(temp, na.rm=T),
+          windsp50   = median(wind.sp,na.rm=T),
+          atmpress50 = median(atm.press,na.rm=T)
+)]
+stmeds
+
+```
+```{r}
+station_averages[ , 
+              temp_dist50 := abs(temp - stmeds$temp50)][order(temp_dist50)]
+```
+```{r}
+station_averages[ which.min(temp_dist50)]
+```
+## Q2
+```{r}
+station_averages <- 
+     met[ , .(
+       temp      = mean(temp, na.rm=T),
+       wind.sp   = mean(wind.sp, na.rm=T),
+       atm.press = mean(atm.press,na.rm=T)
+     ), by = .(USAFID,STATE)]
+head(station_averages)
+```
+```{r}
+statemeds<- station_averages[ , .(
+           temp50    = median(temp, na.rm=T), 
+           wind.sp50 = median(wind.sp, na.rm=T)
+            ), by = STATE]
+statemeds
+```
+```{r}
+station_averages <- 
+  merge(
+  x = station_averages,
+  y = statemeds,
+  by.x = "STATE",
+  by.y = "STATE",
+  all.x = TRUE,
+  all.y = FALSE
+)
+```
+```{r}
+station_averages[ , temp_dist_state50   := temp - temp50]
+station_averages[ , windsp_dist_state50 := wind.sp - wind.sp50] 
+station_averages
+```
+```{r}
+station_averages[ , eucdist := temp_dist_state50^2 +
+                                windsp_dist_state50^2]
+```
+```{r}
+repstation <- station_averages[ , .(
+                    eucdist = min(eucdist, na.rm=T))
+                  , by=STATE]
+```
+```{r}
+repweather <- 
+  merge(
+  x = station_averages,
+  y = repstation,
+  by.x = c("eucdist","STATE"),
+  by.y = c("eucdist","STATE"),
+  all.x = FALSE,
+  all.y = TRUE
+)
+repweather
+```
+## Q3
+```{r}
+met_stations <- unique(met[, .(USAFID, STATE, lon, lat)])
+nrow(met_stations)
+```
+```{r}
+length(unique(met$USAFID))
+```
+```{r}
+met_stations <- unique(met[order(USAFID,day,hour)][, .(USAFID, STATE, lon, lat)])
+met_stations[, n := 1:.N, by=USAFID]
+met_stations <- met_stations[n == 1][, n:= NULL]
+nrow(met_stations)
+```
+```{r}
+met_stations[, lat_mid := quantile(lat, probs = .5, na.rm = TRUE), by=STATE]
+met_stations[, lon_mid := quantile(lon, probs = .5, na.rm = TRUE), by=STATE]
+
+met_stations[, dist := sqrt((lat-lat_mid)^2+(lon-lon_mid)^2)]
+met_stations[, mindist := which.min(dist), by=STATE]
+```
+```{r}
+met_stations[, n := 1:.N, by=STATE]
+met_stations[order(STATE,dist)]
+```
+```{r}
+met_location <- met_stations[n == mindist, .(USAFID, STATE, lon, lat)][order(STATE)]
+met_location
+```
+```{r}
+repweather <-
+  merge(
+  x =   repweather[, .(USAFID, STATE)],
+  y = met_stations[, .(USAFID, STATE, lat, lon)],
+  by.x = c("USAFID","STATE"),
+  by.y = c("USAFID","STATE"),
+  all.x = TRUE,
+  all.y = FALSE
+) 
+
+repweather[, station_type := "met"]
+met_location <- met_location[, .(USAFID, STATE, lat, lon)][, station_type := "loc"]
+all_stations <- rbind(repweather, met_location, use.names=TRUE)
+```
+```{r}
+ggplot(map_data("state"), aes(x = long, y = lat)) +
+  geom_map(aes(map_id = region), map = map_data("state"), col = "lightgrey", fill = "gray") +
+  geom_point(
+    data    = all_stations,
+    mapping = aes(x = lon, y = lat, col = station_type),
+    inherit.aes = FALSE, cex = 2, alpha = 0.5
+    )
+```
+## Q4
+```{r}
+met[, state_temp := mean(temp, na.rm = TRUE), by = STATE]
+met[, temp_cat := fifelse(
+  state_temp < 20, "low-temp", 
+  fifelse(state_temp < 25, "mid-temp", "high-temp"))
+  ]
+head(met)
+```
+```{r}
+table(met$temp_cat, useNA = "always")
+```
+
+
+
+
+
+
+
+
+
+
