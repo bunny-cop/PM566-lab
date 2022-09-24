@@ -1,7 +1,8 @@
 ---
 title: "assignment1"
-output: html_document
 date: "2022-09-23"
+output: github_document 
+always_allow_html: true
 ---
 ```{r}
 library(data.table)
