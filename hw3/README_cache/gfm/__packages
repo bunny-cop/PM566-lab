@@ -1,0 +1,14 @@
+httr
+rvest
+stringr
+xml2
+tidyverse
+ggplot2
+tibble
+tidyr
+readr
+purrr
+dplyr
+forcats
+tidytext
+gridExtra
